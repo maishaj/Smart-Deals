@@ -1,15 +1,16 @@
 const express = require("express");
 const cors = require("cors");
+require("dotenv").config();
 const app = express();
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+console.log(process.env);
 
 //Middleware
 app.use(cors());
 app.use(express.json());
 
-const uri =
-  "mongodb+srv://smartDBUser:DJgkGgWOG5ngbsjs@cluster0.fjenzci.mongodb.net/?appName=Cluster0";
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.fjenzci.mongodb.net/?appName=Cluster0`;
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -40,13 +41,12 @@ async function run() {
       const existingUser = await usersCollection.findOne(query);
 
       if (existingUser) {
-        res.send({message:"User already exists"});
+        res.send({ message: "User already exists" });
       } else {
         const result = await usersCollection.insertOne(newUser);
         res.send(result);
       }
     });
-
 
     //PRODUCTS API
     //Read (find All)
@@ -64,12 +64,14 @@ async function run() {
     });
 
     //latest products
-    app.get('/latest-products', async (req,res)=>{
-       const cursor=productsCollection.find().sort({created_at:-1}).limit(6);
-       const result=await cursor.toArray();
-       res.send(result);
-    })
-
+    app.get("/latest-products", async (req, res) => {
+      const cursor = productsCollection
+        .find()
+        .sort({ created_at: -1 })
+        .limit(6);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
 
     //Read (load single item by id)
     app.get("/products/:id", async (req, res) => {
@@ -78,7 +80,6 @@ async function run() {
       const result = await productsCollection.findOne(query);
       res.send(result);
     });
-
 
     //Insert
     app.post("/products", async (req, res) => {
@@ -126,11 +127,32 @@ async function run() {
     });
 
     //Bids by product
-    app.get('/products/bids/:productId',async (req,res)=>{
-        const productId=req.params.productId;
-        const query={product:productId}; //product came from db and productId from path
+    app.get("/products/bids/:productId", async (req, res) => {
+      const productId = req.params.productId;
+      const query = { product: productId }; //product came from db and productId from path
+      const cursor = bidsCollection.find(query).sort({ bid_price: -1 });
+      const result = await cursor.toArray();
+      res.send(result);
+    });
 
-    })
+    //get bids by email
+    app.get("/bids", async (req, res) => {
+      const query = {};
+      if (query.email) {
+        query.buyer_email = email;
+      }
+      const cursor = bidsCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    //delete a bid
+    app.delete("/bids/:id", async (req, res) => {
+      const id = request.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await bidsCollection.deleteOne(query);
+      res.send(result);
+    });
 
     //insert
     app.post("/bids", async (req, res) => {
