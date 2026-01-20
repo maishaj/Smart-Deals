@@ -1,14 +1,71 @@
 const express = require("express");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
+const admin = require("firebase-admin");
 require("dotenv").config();
 const app = express();
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 console.log(process.env);
 
+const serviceAccount = require("./smart-deals-firebase-adminsdk.json");
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
 //Middleware
 app.use(cors());
 app.use(express.json());
+
+const logger = (req, res, next) => {
+  console.log("Logging information");
+  next();
+};
+
+const verifyFireBaseToken = async (req, res, next) => {
+  console.log("In the verify middleware: ", req.headers.authorization);
+  if (!req.headers.authorization) {
+    //do not allow to go
+    return res.status(401).send({ message: "Unauthorized access" });
+  }
+
+  const token = req.headers.authorization.split(" ")[1];
+  if (!token) {
+    return res.status(401).send({ message: "Unauthorized access" });
+  }
+
+  //Verify id token
+  try {
+    const userInfo = await admin.auth().verifyIdToken(token);
+    console.log("After token validation: ", userInfo);
+    next();
+  } catch {
+    return res.status(401).send({ message: "Unauthorized access" });
+  }
+};
+
+//verify JWT Token using local storage
+
+const verifyJWTToken = (req, res, next) => {
+  //console.log('In middleware: ',req.headers);
+  const authorization = req.headers.authorization;
+  if (!authorization) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+  const token = authorization.split(" ")[1];
+  if (!token) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ message: "unauthorized access" });
+    }
+    //put it in the right place
+    req.token_email = decoded.email;
+    next();
+  });
+};
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.fjenzci.mongodb.net/?appName=Cluster0`;
 
@@ -32,6 +89,15 @@ async function run() {
     const productsCollection = db.collection("products");
     const bidsCollection = db.collection("bids");
     const usersCollection = db.collection("users");
+
+    // jwt related APIs
+    app.post("/getToken", (req, res) => {
+      const loggedUser = req.body;
+      const token = jwt.sign(loggedUser, process.env.JWT_SECRET, {
+        expiresIn: "1h",
+      });
+      res.send({ token: token });
+    });
 
     //USERS API
     app.post("/users", async (req, res) => {
@@ -113,38 +179,66 @@ async function run() {
 
     //bids realted APIs
 
-    //Read by email
-    app.get("/bids", async (req, res) => {
+    // //Read by email
+    // app.get("/bids", async (req, res) => {
+    //   const email = req.query.email;
+    //   const query = {};
+    //   console.log("Query: ", req.query);
+    //   if (email) {
+    //     query.buyer_email = email;
+    //   }
+    //   const cursor = bidsCollection.find(query);
+    //   const result = await cursor.toArray();
+    //   res.send(result);
+    // });
+
+    //Bids by product
+    app.get(
+      "/products/bids/:productId",
+      verifyFireBaseToken,
+      async (req, res) => {
+        const productId = req.params.productId;
+        const query = { product: productId }; //product came from db and productId from path
+        const cursor = bidsCollection.find(query).sort({ bid_price: -1 });
+        const result = await cursor.toArray();
+        res.send(result);
+      },
+    );
+
+    //token verify using local storage token
+    app.get("/bids", verifyJWTToken, async (req, res) => {
+      //console.log("Headers", req.headers);
       const email = req.query.email;
       const query = {};
-      console.log("Query: ", req.query);
       if (email) {
         query.buyer_email = email;
       }
-      const cursor = bidsCollection.find(query);
-      const result = await cursor.toArray();
-      res.send(result);
-    });
-
-    //Bids by product
-    app.get("/products/bids/:productId", async (req, res) => {
-      const productId = req.params.productId;
-      const query = { product: productId }; //product came from db and productId from path
-      const cursor = bidsCollection.find(query).sort({ bid_price: -1 });
-      const result = await cursor.toArray();
-      res.send(result);
-    });
-
-    //get bids by email
-    app.get("/bids", async (req, res) => {
-      const query = {};
-      if (query.email) {
-        query.buyer_email = email;
+      //verify if user has access to see this data
+      if (email !== req.token_email) {
+        return res.status(403).send({ message: "Forbidden access" });
       }
+
       const cursor = bidsCollection.find(query);
       const result = await cursor.toArray();
       res.send(result);
     });
+
+    //get bids by email with firebase token verified
+    // app.get("/bids", logger, verifyFireBaseToken, async (req, res) => {
+    //   //console.log('Headers',req.headers);
+    //   const email = req.query.email;
+    //   const query = {};
+
+    //   if (email) {
+    //     if (email !== req.token_email) {
+    //       return res.status(403).send({ message: "Forbidden access" });
+    //     }
+    //     query.buyer_email = email;
+    //   }
+    //   const cursor = bidsCollection.find(query);
+    //   const result = await cursor.toArray();
+    //   res.send(result);
+    // });
 
     //delete a bid
     app.delete("/bids/:id", async (req, res) => {
